@@ -10,6 +10,10 @@ class ValidationError(DomainError): kind=ErrorKind.VALIDATION
 class NotFoundError(DomainError): kind=ErrorKind.NOT_FOUND
 class PermissionDenied(DomainError): kind=ErrorKind.FORBIDDEN
 class ConflictError(DomainError): kind=ErrorKind.CONFLICT
+class StockShortageError(ConflictError):
+    """药剂余量不足；detail携带申请量、余量和冲突火场，供入口层原样返回。"""
+    def __init__(self,message,detail):
+        super().__init__(message); self.detail=detail
 SEVERITIES=['low', 'moderate', 'high', 'extreme']; STATES=['reported', 'active', 'contained', 'controlled', 'closed']; ROLES=['field_commander', 'incident_commander', 'logistics', 'viewer']
 @dataclass(frozen=True)
 class Item:
@@ -17,6 +21,15 @@ class Item:
 @dataclass(frozen=True)
 class Record:
     id:int; item_id:int; kind:str; detail:str; status:str; external_ref:Optional[str]; created_by:str; created_at:str
+@dataclass(frozen=True)
+class Agent:
+    id:int; name:str; unit:str; stock:float; version:int; external_ref:Optional[str]; created_by:str; created_at:str; updated_at:str
+@dataclass(frozen=True)
+class Requisition:
+    id:int; field_ticket:str; fire_id:int; agent_id:int; quantity:float; returned:float; status:str; created_by:str; created_at:str
+@dataclass(frozen=True)
+class ReturnRecord:
+    id:int; requisition_id:int; quantity:float; handler:str; created_at:str
 @dataclass(frozen=True)
 class AuditEntry:
     id:int; action:str; entity_type:str; entity_id:int; actor:str; detail:Dict[str,Any]; previous_hash:str; entry_hash:str; created_at:str
@@ -36,3 +49,7 @@ def require_number(value,field,minimum=0.0):
     return number
 def ensure_role(role,allowed):
     if role not in allowed: raise PermissionDenied("当前角色无权执行该操作")
+def require_positive_int(value,field):
+    if isinstance(value,bool) or not isinstance(value,int) or value<1:
+        raise ValidationError(f"{field}必须是正整数")
+    return value

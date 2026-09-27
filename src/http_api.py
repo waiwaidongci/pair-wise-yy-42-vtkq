@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Dict, Tuple
+from urllib.parse import urlparse
 
 from .domain import (ConflictError, DomainError, NotFoundError, PermissionDenied,
-                     ValidationError)
+                     StockShortageError, ValidationError)
 from .service import Service
 
 
@@ -42,6 +42,15 @@ def make_handler(service: Service, static_dir: str):
         def _identity(self) -> Tuple[str, str]:
             return self.headers.get("X-Actor", ""), self.headers.get("X-Role", "")
 
+        def _path_id(self, segment: str, label: str) -> int:
+            try:
+                value = int(segment)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(f"{label}必须是正整数") from exc
+            if value < 1:
+                raise ValidationError(f"{label}必须是正整数")
+            return value
+
         def _body(self) -> Dict[str, Any]:
             length = int(self.headers.get("Content-Length", "0") or 0)
             if length <= 0:
@@ -71,7 +80,10 @@ def make_handler(service: Service, static_dir: str):
                 status = 400
             else:
                 status = 500
-            self._json(status, {"error": exc.__class__.__name__, "message": str(exc)})
+            payload = {"error": exc.__class__.__name__, "message": str(exc)}
+            if isinstance(exc, StockShortageError):
+                payload["detail"] = exc.detail
+            self._json(status, payload)
 
         def do_GET(self) -> None:
             try:
@@ -98,10 +110,43 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"events": service.audit(role)})
+                elif path == "/api/agents":
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"agents": service.list_agents(role)})
+                elif path == "/api/agent-usage":
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"usage": service.agent_usage(role)})
+                elif path.startswith("/api/agents/"):
+                    agent_id = self._path_id(path.rsplit("/", 1)[-1], "agent_id")
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, service.get_agent(agent_id, role))
+                elif self._fire_requisitions(path):
+                    fire_id = self._path_id(path.split("/")[3], "fire_id")
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {
+                        "requisitions": service.list_requisitions(fire_id, role)})
+                elif self._requisition_returns(path):
+                    parts = path.split("/")
+                    fire_id = self._path_id(parts[3], "fire_id")
+                    requisition_id = self._path_id(parts[5], "requisition_id")
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"returns": service.list_returns(
+                        fire_id, requisition_id, role)})
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
                 self._send_error(exc)
+
+        @staticmethod
+        def _fire_requisitions(path: str) -> bool:
+            parts = path.split("/")
+            return (len(parts) == 5 and parts[1] == "api"
+                    and parts[2] == "fires" and parts[4] == "requisitions")
 
         def do_POST(self) -> None:
             try:
@@ -110,6 +155,17 @@ def make_handler(service: Service, static_dir: str):
                 body = self._body()
                 if path == "/api/items":
                     self._json(201, service.create_item(body, actor, role))
+                elif path == "/api/agents":
+                    self._json(201, service.create_agent(body, actor, role))
+                elif self._fire_requisitions(path):
+                    fire_id = self._path_id(path.split("/")[3], "fire_id")
+                    self._json(201, service.requisition(fire_id, body, actor, role))
+                elif self._requisition_returns(path):
+                    parts = path.split("/")
+                    fire_id = self._path_id(parts[3], "fire_id")
+                    requisition_id = self._path_id(parts[5], "requisition_id")
+                    self._json(201, service.return_agent(
+                        fire_id, requisition_id, body, actor, role))
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     self._json(201, service.add_record(item_id, body, actor, role))
@@ -123,5 +179,12 @@ def make_handler(service: Service, static_dir: str):
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
                 self._send_error(exc)
+
+        @staticmethod
+        def _requisition_returns(path: str) -> bool:
+            parts = path.split("/")
+            return (len(parts) == 7 and parts[1] == "api"
+                    and parts[2] == "fires" and parts[4] == "requisitions"
+                    and parts[6] == "returns")
 
     return Handler
