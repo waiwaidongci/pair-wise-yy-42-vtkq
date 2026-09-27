@@ -84,6 +84,20 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"items": service.list_items(role)})
+                elif path == "/api/chemicals":
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"chemicals": service.list_chemicals(role)})
+                elif path.startswith("/api/items/") and path.endswith("/requisitions"):
+                    item_id = int(path.split("/")[3])
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"requisitions": service.list_requisitions(item_id, role)})
+                elif path.startswith("/api/requisitions/") and path.endswith("/returns"):
+                    requisition_id = int(path.split("/")[3])
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, {"returns": service.list_returns(requisition_id, role)})
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     actor, role = self._identity()
@@ -110,6 +124,15 @@ def make_handler(service: Service, static_dir: str):
                 body = self._body()
                 if path == "/api/items":
                     self._json(201, service.create_item(body, actor, role))
+                elif path == "/api/chemicals":
+                    self._json(201, service.create_chemical(body, actor, role))
+                elif path.startswith("/api/items/") and path.endswith("/requisitions"):
+                    item_id = int(path.split("/")[3])
+                    record = service.create_requisition(item_id, body, actor, role)
+                    self._json(200 if record.get("replayed") else 201, record)
+                elif path.startswith("/api/requisitions/") and path.endswith("/returns"):
+                    requisition_id = int(path.split("/")[3])
+                    self._json(201, service.add_return(requisition_id, body, actor, role))
                 elif path.startswith("/api/items/") and path.endswith("/records"):
                     item_id = int(path.split("/")[3])
                     self._json(201, service.add_record(item_id, body, actor, role))
